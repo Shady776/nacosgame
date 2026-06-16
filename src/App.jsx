@@ -1,11 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { createClient } from '@supabase/supabase-js'
+import { BrowserRouter as Router, Routes, Route, useNavigate } from 'react-router-dom'
 import './App.css'
-
-const supabase = createClient(
-  'https://weaybqqaiuqcadespvdg.supabase.co',
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndlYXlicXFhaXVxY2FkZXNwdmRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA4NDk5MzAsImV4cCI6MjA5NjQyNTkzMH0.kF8EWBdgOFwYPjHYMJMFd03A6UnAJb4r5kwLQVERjDY'
-)
+import supabase from './supabase'
 const QUESTION_TIME = 60
 
 function shuffle(arr) {
@@ -33,50 +29,84 @@ function getBadgeLabel(lang) {
   return 'JavaScript'
 }
 
-// SCREENS
-const SCREEN = { ENTRY: 'entry', QUIZ: 'quiz', RESULTS: 'results', LEADERBOARD: 'leaderboard' }
-
 export default function App() {
-  const [screen, setScreen] = useState(SCREEN.ENTRY)
-  const [participant, setParticipant] = useState(null)
-  const [questions, setQuestions] = useState([])
-  const [session, setSession] = useState(null) // { score, correct, fast, totalTime, id }
+  return (
+    <Router>
+      <Layout>
+        <Routes>
+          <Route path="/" element={<Home />} />
+          <Route path="/leaderboard" element={<LeaderboardPage />} />
+        </Routes>
+      </Layout>
+    </Router>
+  )
+}
 
+function Layout({ children }) {
   return (
     <div className="app">
       <nav className="nav">
         <div className="nav-logo">
-          <div className="nav-icon">{'</>'}</div>
-          <div className="nav-title">KDU <span>//</span> NACOS<br /><span style={{fontSize:'10px',letterSpacing:'0.15em'}}>DEBUG CHALLENGE</span></div>
+          <a href="/" style={{ textDecoration: 'none', color: 'inherit', cursor: 'pointer' }}>
+            <div className="nav-icon">{'</>'}</div>
+            <div className="nav-title">KDU <span>//</span> NACOS<br /><span style={{fontSize:'10px',letterSpacing:'0.15em'}}>DEBUG CHALLENGE</span></div>
+          </a>
         </div>
         <div className="nav-status">
-          <div className="status-dot" />
-          session://live
+          <a href="/leaderboard" style={{ textDecoration: 'none', color: 'inherit', cursor: 'pointer' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div className="status-dot" />
+              session://live
+            </div>
+          </a>
         </div>
       </nav>
+      {children}
+    </div>
+  )
+}
 
-      {screen === SCREEN.ENTRY && (
-        <EntryScreen onStart={(p, q) => { setParticipant(p); setQuestions(q); setScreen(SCREEN.QUIZ) }} />
+function Home() {
+  const [screen, setScreen] = useState('entry') // entry, quiz, results, leaderboard
+  const [participant, setParticipant] = useState(null)
+  const [questions, setQuestions] = useState([])
+  const [session, setSession] = useState(null)
+
+  return (
+    <>
+      {screen === 'entry' && (
+        <EntryScreen onStart={(p, q) => { setParticipant(p); setQuestions(q); setScreen('quiz') }} />
       )}
-      {screen === SCREEN.QUIZ && (
+      {screen === 'quiz' && (
         <QuizScreen
           participant={participant}
           questions={questions}
-          onDone={(s) => { setSession(s); setScreen(SCREEN.RESULTS) }}
+          onDone={(s) => { setSession(s); setScreen('results') }}
         />
       )}
-      {screen === SCREEN.RESULTS && (
+      {screen === 'results' && (
         <ResultsScreen
           session={session}
-          onLeaderboard={() => setScreen(SCREEN.LEADERBOARD)}
+          onLeaderboard={() => setScreen('leaderboard')}
+          onRestart={() => setScreen('entry')}
         />
       )}
-      {screen === SCREEN.LEADERBOARD && (
-        <LeaderboardScreen
-          participantId={session?.id}
-          onRestart={() => setScreen(SCREEN.ENTRY)}
-        />
+      {screen === 'leaderboard' && (
+        <div className="screen">
+          <LeaderboardScreen
+            participantId={session?.id}
+            onRestart={() => setScreen('entry')}
+          />
+        </div>
       )}
+    </>
+  )
+}
+
+function LeaderboardPage() {
+  return (
+    <div className="screen">
+      <LeaderboardScreen participantId={null} onRestart={() => window.location.href = '/'} />
     </div>
   )
 }
@@ -159,6 +189,7 @@ function QuizScreen({ participant, questions, onDone }) {
   const [selected, setSelected] = useState(null)
   const [timeLeft, setTimeLeft] = useState(QUESTION_TIME)
   const [results, setResults] = useState([]) // {correct, fast, time}
+  const [submitted, setSubmitted] = useState(false) // prevent duplicate submissions
   const timerRef = useRef(null)
   const startRef = useRef(Date.now())
 
@@ -167,9 +198,22 @@ function QuizScreen({ participant, questions, onDone }) {
   const advance = useCallback((chosenIdx) => {
     clearInterval(timerRef.current)
     const elapsed = Math.round((Date.now() - startRef.current) / 1000)
-    const correct = chosenIdx === q.answer
+    
+    // Normalize answer to number (0-3) for comparison
+    const answerIdx = typeof q.correct_answer === 'string' 
+      ? (q.correct_answer === 'A' || q.correct_answer === 'a' ? 0 : 
+         q.correct_answer === 'B' || q.correct_answer === 'b' ? 1 : 
+         q.correct_answer === 'C' || q.correct_answer === 'c' ? 2 : 
+         q.correct_answer === 'D' || q.correct_answer === 'd' ? 3 : 
+         parseInt(q.correct_answer, 10))
+      : q.correct_answer
+    
+    const correct = chosenIdx === answerIdx
     const fast = elapsed < QUESTION_TIME && chosenIdx !== null
     const newResults = [...results, { correct, fast, time: elapsed }]
+    
+    // Debug log (remove after testing)
+    console.log(`Q${idx + 1}: chose=${chosenIdx}, answer=${q.correct_answer} (normalized=${answerIdx}), correct=${correct}`)
 
     if (idx < questions.length - 1) {
       setResults(newResults)
@@ -187,23 +231,51 @@ function QuizScreen({ participant, questions, onDone }) {
   }, [idx, q, results, questions.length])
 
   async function finishQuiz(allResults) {
+    // Prevent duplicate submissions
+    if (submitted) {
+      console.warn('Quiz already submitted, ignoring duplicate call')
+      return
+    }
+    setSubmitted(true)
+
     const score = allResults.reduce((acc, r) => acc + (r.correct ? 10 : 0) + (r.correct && r.fast ? 5 : 0), 0)
     const correct = allResults.filter(r => r.correct).length
     const fast = allResults.filter(r => r.correct && r.fast).length
     const totalTime = allResults.reduce((acc, r) => acc + r.time, 0)
-    const sessionQIds = questions.map(q => q.id)
 
-    const { data, error } = await supabase.from('participants').insert({
-      name: participant.name,
-      matric: participant.matric,
-      score,
-      total_time_seconds: totalTime,
-      fast_answers: fast,
-      correct_answers: correct,
-      session_questions: sessionQIds
-    }).select().single()
+    try {
+      console.log('Saving participant:', {
+        name: participant.name,
+        matric: participant.matric,
+        score,
+        total_time_seconds: totalTime,
+        fast_answers: fast,
+        correct_answers: correct
+      })
 
-    onDone({ score, correct, fast, totalTime, id: data?.id })
+      const { data, error } = await supabase.from('participants').insert({
+        name: participant.name,
+        matric: participant.matric,
+        score,
+        total_time_seconds: totalTime,
+        fast_answers: fast,
+        correct_answers: correct
+      }).select().single()
+
+      if (error) {
+        console.error('Error saving participant:', error)
+        alert('Error saving score: ' + error.message)
+        setSubmitted(false) // allow retry on error
+        return
+      }
+
+      console.log('Participant saved:', data)
+      onDone({ score, correct, fast, totalTime, id: data?.id })
+    } catch (e) {
+      console.error('Exception saving participant:', e)
+      alert('Unexpected error: ' + e.message)
+      setSubmitted(false) // allow retry on error
+    }
   }
 
   useEffect(() => {
@@ -240,10 +312,19 @@ function QuizScreen({ participant, questions, onDone }) {
 
           <div className="options">
             {options.map((opt, i) => {
+              // Normalize answer to number for comparison
+              const answerIdx = typeof q.correct_answer === 'string' 
+                ? (q.correct_answer === 'A' || q.correct_answer === 'a' ? 0 : 
+                   q.correct_answer === 'B' || q.correct_answer === 'b' ? 1 : 
+                   q.correct_answer === 'C' || q.correct_answer === 'c' ? 2 : 
+                   q.correct_answer === 'D' || q.correct_answer === 'd' ? 3 : 
+                   parseInt(q.correct_answer, 10))
+                : q.correct_answer
+              
               let cls = 'option-btn'
               if (selected !== null) {
-                if (i === q.answer) cls += ' correct'
-                else if (i === selected && selected !== q.answer) cls += ' wrong'
+                if (i === answerIdx) cls += ' correct'
+                else if (i === selected && selected !== answerIdx) cls += ' wrong'
               }
               return (
                 <button key={i} className={cls} disabled={selected !== null} onClick={() => advance(i)}>
@@ -260,7 +341,7 @@ function QuizScreen({ participant, questions, onDone }) {
 }
 
 // ── RESULTS ──────────────────────────────────────────────────────────────────
-function ResultsScreen({ session, onLeaderboard }) {
+function ResultsScreen({ session, onLeaderboard, onRestart }) {
   const { score, correct, fast, totalTime } = session
 
   return (
@@ -286,6 +367,7 @@ function ResultsScreen({ session, onLeaderboard }) {
         </div>
 
         <button className="btn-lb" onClick={onLeaderboard}>VIEW_LEADERBOARD →</button>
+        <button className="btn-again" onClick={onRestart} style={{ marginTop: '1rem' }}>↩ RESTART_CHALLENGE</button>
       </div>
     </div>
   )
@@ -295,17 +377,35 @@ function ResultsScreen({ session, onLeaderboard }) {
 function LeaderboardScreen({ participantId, onRestart }) {
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
 
   useEffect(() => {
     async function fetch() {
-      const { data } = await supabase
-        .from('participants')
-        .select('id, name, matric, score, total_time_seconds, fast_answers, correct_answers')
-        .order('score', { ascending: false })
-        .order('total_time_seconds', { ascending: true })
-        .limit(10)
-      setRows(data || [])
-      setLoading(false)
+      try {
+        setLoading(true)
+        setError(null)
+        const { data, error: qErr } = await supabase
+          .from('participants')
+          .select('id, name, matric, score, total_time_seconds, fast_answers, correct_answers')
+          .order('score', { ascending: false })
+          .order('total_time_seconds', { ascending: true })
+          .limit(10)
+        
+        if (qErr) {
+          console.error('Leaderboard fetch error:', qErr)
+          setError(qErr.message || 'Failed to load leaderboard')
+          setRows([])
+        } else {
+          console.log('Leaderboard data:', data)
+          setRows(data || [])
+        }
+      } catch (e) {
+        console.error('Leaderboard exception:', e)
+        setError(e.message || 'Unexpected error')
+        setRows([])
+      } finally {
+        setLoading(false)
+      }
     }
     fetch()
   }, [])
@@ -318,45 +418,61 @@ function LeaderboardScreen({ participantId, onRestart }) {
   }
 
   return (
-    <div className="screen">
-      <div className="lb-wrap">
-        <h2 className="lb-title"><span className="accent">{'</>'}</span> Leaderboard</h2>
-        <p className="lb-sub">Top 10 participants · sorted by score, then time</p>
+    <div className="lb-wrap">
+      <h2 className="lb-title"><span className="accent">{'</>'}</span> Leaderboard</h2>
+      <p className="lb-sub">Top 10 participants · sorted by score, then time</p>
 
-        {loading ? (
-          <div className="loading">fetching results...</div>
-        ) : (
-          <table className="lb-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>NAME</th>
-                <th>MATRIC</th>
-                <th>CORRECT</th>
-                <th>FAST</th>
-                <th>TIME</th>
-                <th>SCORE</th>
+      {loading && (
+        <div className="loading">fetching results...</div>
+      )}
+      
+      {error && (
+        <div style={{ color: 'var(--red)', marginBottom: '1rem', padding: '1rem', backgroundColor: 'rgba(255,0,0,0.1)', borderRadius: '4px' }}>
+          <strong>Error:</strong> {error}
+          <br />
+          <button onClick={() => window.location.reload()} style={{ marginTop: '0.5rem', cursor: 'pointer' }}>
+            Retry
+          </button>
+        </div>
+      )}
+      
+      {!loading && !error && rows.length === 0 && (
+        <div style={{ color: 'var(--muted)', padding: '2rem', textAlign: 'center' }}>
+          No participants yet. Be the first to take the challenge!
+        </div>
+      )}
+      
+      {!loading && rows.length > 0 && (
+        <table className="lb-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>NAME</th>
+              <th>MATRIC</th>
+              <th>CORRECT</th>
+              <th>FAST</th>
+              <th>TIME</th>
+              <th>SCORE</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={r.id} className={r.id === participantId ? 'me' : ''}>
+                <td><span className={`rank-badge ${rankClass(i)}`}>{i + 1}</span></td>
+                <td>{r.name}{r.id === participantId ? ' ◀ you' : ''}</td>
+                <td style={{ color: 'var(--muted)' }}>{r.matric}</td>
+                <td>{r.correct_answers}/20</td>
+                <td>{r.fast_answers}</td>
+                <td style={{ color: 'var(--muted)' }}>{r.total_time_seconds}s</td>
+                <td className="lb-score">{r.score}</td>
               </tr>
-            </thead>
-            <tbody>
-              {rows.map((r, i) => (
-                <tr key={r.id} className={r.id === participantId ? 'me' : ''}>
-                  <td><span className={`rank-badge ${rankClass(i)}`}>{i + 1}</span></td>
-                  <td>{r.name}{r.id === participantId ? ' ◀ you' : ''}</td>
-                  <td style={{ color: 'var(--muted)' }}>{r.matric}</td>
-                  <td>{r.correct_answers}/20</td>
-                  <td>{r.fast_answers}</td>
-                  <td style={{ color: 'var(--muted)' }}>{r.total_time_seconds}s</td>
-                  <td className="lb-score">{r.score}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+            ))}
+          </tbody>
+        </table>
+      )}
 
-        <br />
-        <button className="btn-again" onClick={onRestart}>↩ RESTART_CHALLENGE</button>
-      </div>
+      <br />
+      {onRestart && <button className="btn-again" onClick={onRestart}>↩ RESTART_CHALLENGE</button>}
     </div>
   )
 }
